@@ -73,4 +73,17 @@ class ProdutoTest {
         produto.adicionarEstoque(4);
         assertEquals(new BigDecimal("10.00"), produto.valorEmEstoque());
     }
+
+    @Test
+    void precoComMaisDeDuasCasasDecimaisEhRejeitado() {
+        assertThrows(IllegalArgumentException.class, () -> produto.setPreco(new BigDecimal("1.999")));
+        produto.setPreco(new BigDecimal("1.990")); // zeros à direita não contam: continua sendo R$ 1,99
+        produto.setPreco(new BigDecimal("1E+2"));  // 100
+    }
+
+    @Test
+    void precoAcimaDoMaximoEhRejeitado() {
+        assertThrows(IllegalArgumentException.class, () -> produto.setPreco(new BigDecimal("1000000000.01")));
+        produto.setPreco(new BigDecimal("1000000000.00"));
+    }
 }

@@ -3,3 +3,7 @@ target/
 *.iml
 out/
 .DS_Store
+
+# banco de dados local (SQLite)
+*.db
+*.db-journal

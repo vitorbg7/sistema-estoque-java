@@ -13,6 +13,8 @@ import java.util.Objects;
  */
 public final class Produto {
 
+    private static final BigDecimal PRECO_MAXIMO = new BigDecimal("1000000000");
+
     private final String codigo;
     private String nome;
     private BigDecimal preco;
@@ -86,6 +88,12 @@ public final class Produto {
     public void setPreco(BigDecimal preco) {
         if (preco == null || preco.signum() < 0) {
             throw new IllegalArgumentException("Preço não pode ser nulo nem negativo.");
+        }
+        if (preco.stripTrailingZeros().scale() > 2) {
+            throw new IllegalArgumentException("Preço deve ter no máximo 2 casas decimais (centavos).");
+        }
+        if (preco.compareTo(PRECO_MAXIMO) > 0) {
+            throw new IllegalArgumentException("Preço muito alto (máximo R$ 1.000.000.000,00).");
         }
         this.preco = preco;
     }

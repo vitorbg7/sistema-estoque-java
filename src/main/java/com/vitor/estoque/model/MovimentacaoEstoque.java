@@ -23,13 +23,33 @@ public final class MovimentacaoEstoque {
     private final BigDecimal precoUnitario;
     private final LocalDateTime dataHora;
 
+    /** Cria uma movimentação nova: id da sequência, preço atual do produto e data/hora de agora. */
     public MovimentacaoEstoque(Produto produto, TipoMovimentacao tipo, int quantidade) {
-        this.id = SEQUENCIA.getAndIncrement();
+        this(SEQUENCIA.getAndIncrement(), produto, tipo, quantidade, produto.getPreco(), LocalDateTime.now());
+    }
+
+    private MovimentacaoEstoque(Long id, Produto produto, TipoMovimentacao tipo, int quantidade,
+                                BigDecimal precoUnitario, LocalDateTime dataHora) {
+        this.id = id;
         this.produto = produto;
         this.tipo = tipo;
         this.quantidade = quantidade;
-        this.precoUnitario = produto.getPreco();
-        this.dataHora = LocalDateTime.now();
+        this.precoUnitario = precoUnitario;
+        this.dataHora = dataHora;
+    }
+
+    /** Reconstrói uma movimentação que já foi gravada (usado ao ler do banco de dados). */
+    public static MovimentacaoEstoque restaurar(Long id, Produto produto, TipoMovimentacao tipo, int quantidade,
+                                                BigDecimal precoUnitario, LocalDateTime dataHora) {
+        return new MovimentacaoEstoque(id, produto, tipo, quantidade, precoUnitario, dataHora);
+    }
+
+    /**
+     * Garante que os próximos ids sejam maiores que {@code ultimoIdUsado}.
+     * Necessário ao abrir um banco que já tem histórico gravado.
+     */
+    public static void sincronizarSequencia(long ultimoIdUsado) {
+        SEQUENCIA.accumulateAndGet(ultimoIdUsado + 1, Math::max);
     }
 
     public Long getId() {

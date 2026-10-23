@@ -115,4 +115,30 @@ class EstoqueServiceTest {
         assertEquals(precoAntigo, service.listarMovimentacoes().get(0).getPrecoUnitario());
         assertEquals(new BigDecimal("99.00"), service.buscarProduto("E1").getPreco());
     }
+
+    @Test
+    void produtoSemHistoricoPodeSerRemovido() {
+        service.removerProduto("E1");
+        assertThrows(ProdutoNaoEncontradoException.class, () -> service.buscarProduto("E1"));
+    }
+
+    @Test
+    void produtoComMovimentacoesNaoPodeSerRemovido() {
+        service.registrarEntrada("E1", 3);
+
+        assertThrows(EstoqueException.class, () -> service.removerProduto("E1"));
+        assertEquals(3, service.buscarProduto("E1").getQuantidadeEmEstoque());
+    }
+
+    @Test
+    void removerProdutoInexistenteLancaExcecao() {
+        assertThrows(ProdutoNaoEncontradoException.class, () -> service.removerProduto("XXX"));
+    }
+
+    @Test
+    void naoCadastraProdutoDeFornecedorQueNaoFoiCadastrado() {
+        Fornecedor naoCadastrado = new Fornecedor("Z", "Fornecedor Z", "");
+        assertThrows(EstoqueException.class, () -> service.cadastrarProduto(
+                new Produto("Z1", "Caneta", BigDecimal.ONE, 1, Categoria.PAPELARIA, naoCadastrado)));
+    }
 }

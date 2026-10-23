@@ -6,10 +6,16 @@ import com.vitor.estoque.model.Fornecedor;
 import com.vitor.estoque.model.MovimentacaoEstoque;
 import com.vitor.estoque.model.Produto;
 import com.vitor.estoque.repository.RepositorioEmMemoria;
+import com.vitor.estoque.repository.jdbc.BancoDeDados;
+import com.vitor.estoque.repository.jdbc.FornecedorRepositorioJdbc;
+import com.vitor.estoque.repository.jdbc.MovimentacaoRepositorioJdbc;
+import com.vitor.estoque.repository.jdbc.ProdutoRepositorioJdbc;
 import com.vitor.estoque.service.EstoqueService;
 import com.vitor.estoque.service.EstoqueService.VendaPorProduto;
 
 import java.math.BigDecimal;
+import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.NoSuchElementException;
@@ -18,22 +24,47 @@ import java.util.Scanner;
 /**
  * Interface de console do sistema de estoque. Só cuida de ler e mostrar dados;
  * toda a regra de negócio está em EstoqueService e nas classes de model.
+ *
+ * Por padrão os dados ficam no arquivo estoque.db (SQLite, via JDBC).
+ * Com o argumento --memoria nada é gravado e os dados somem ao fechar.
  */
 public class Main {
 
+    private static final Path ARQUIVO_DO_BANCO = Path.of("estoque.db");
     private static final Scanner ENTRADA = new Scanner(System.in);
     private static final Locale BR = Locale.of("pt", "BR");
 
-    private static final EstoqueService SERVICE = new EstoqueService(
-            new RepositorioEmMemoria<>(Produto::getCodigo),
-            new RepositorioEmMemoria<>(Fornecedor::getCnpj),
-            new RepositorioEmMemoria<>(MovimentacaoEstoque::getId));
+    private static EstoqueService servico;
 
     public static void main(String[] args) {
         System.out.println("=====================================");
         System.out.println("        SISTEMA DE ESTOQUE / LOJA");
         System.out.println("=====================================");
 
+        if (Arrays.asList(args).contains("--memoria")) {
+            servico = new EstoqueService(
+                    new RepositorioEmMemoria<>(Produto::getCodigo),
+                    new RepositorioEmMemoria<>(Fornecedor::getCnpj),
+                    new RepositorioEmMemoria<>(MovimentacaoEstoque::getId));
+            System.out.println("Modo memória: os dados somem ao fechar o programa.");
+            executarMenu();
+            return;
+        }
+
+        try (BancoDeDados banco = BancoDeDados.arquivo(ARQUIVO_DO_BANCO)) {
+            servico = new EstoqueService(
+                    new ProdutoRepositorioJdbc(banco),
+                    new FornecedorRepositorioJdbc(banco),
+                    new MovimentacaoRepositorioJdbc(banco),
+                    banco);
+            System.out.println("Banco de dados: " + ARQUIVO_DO_BANCO.toAbsolutePath());
+            executarMenu();
+        } catch (EstoqueException e) {
+            System.out.println("Erro: " + e.getMessage());
+        }
+    }
+
+    private static void executarMenu() {
         boolean rodando = true;
         while (rodando) {
             exibirMenu();
@@ -88,12 +119,12 @@ public class Main {
         String cnpj = lerTexto("CNPJ: ");
         String nome = lerTexto("Nome: ");
         String telefone = lerTexto("Telefone (opcional): ");
-        SERVICE.cadastrarFornecedor(new Fornecedor(cnpj, nome, telefone));
+        servico.cadastrarFornecedor(new Fornecedor(cnpj, nome, telefone));
         System.out.println("Fornecedor cadastrado.");
     }
 
     private static void cadastrarProduto() {
-        if (SERVICE.listarFornecedores().isEmpty()) {
+        if (servico.listarFornecedores().isEmpty()) {
             System.out.println("Cadastre pelo menos um fornecedor antes de cadastrar produtos.");
             return;
         }
@@ -104,36 +135,36 @@ public class Main {
         Categoria categoria = escolherCategoria();
         Fornecedor fornecedor = escolherFornecedor();
 
-        SERVICE.cadastrarProduto(new Produto(codigo, nome, preco, minimo, categoria, fornecedor));
+        servico.cadastrarProduto(new Produto(codigo, nome, preco, minimo, categoria, fornecedor));
         System.out.println("Produto cadastrado (estoque inicial 0; use a opção 6 para dar entrada).");
     }
 
     private static void listarProdutos() {
-        imprimirLista(SERVICE.listarProdutos(), "Nenhum produto cadastrado.");
+        imprimirLista(servico.listarProdutos(), "Nenhum produto cadastrado.");
     }
 
     private static void listarPorCategoria() {
         Categoria categoria = escolherCategoria();
-        imprimirLista(SERVICE.listarPorCategoria(categoria), "Nenhum produto nessa categoria.");
+        imprimirLista(servico.listarPorCategoria(categoria), "Nenhum produto nessa categoria.");
     }
 
     private static void listarPorFornecedor() {
         Fornecedor fornecedor = escolherFornecedor();
-        imprimirLista(SERVICE.listarPorFornecedor(fornecedor.getCnpj()), "Nenhum produto desse fornecedor.");
+        imprimirLista(servico.listarPorFornecedor(fornecedor.getCnpj()), "Nenhum produto desse fornecedor.");
     }
 
     private static void registrarEntrada() {
         String codigo = lerTexto("Código do produto: ");
         int quantidade = lerInt("Quantidade que entrou: ");
-        SERVICE.registrarEntrada(codigo, quantidade);
-        System.out.println("Entrada registrada. " + SERVICE.buscarProduto(codigo));
+        servico.registrarEntrada(codigo, quantidade);
+        System.out.println("Entrada registrada. " + servico.buscarProduto(codigo));
     }
 
     private static void registrarSaida() {
         String codigo = lerTexto("Código do produto: ");
         int quantidade = lerInt("Quantidade vendida: ");
-        SERVICE.registrarSaida(codigo, quantidade);
-        Produto produto = SERVICE.buscarProduto(codigo);
+        servico.registrarSaida(codigo, quantidade);
+        Produto produto = servico.buscarProduto(codigo);
         System.out.println("Saída registrada. " + produto);
         if (produto.estoqueBaixo()) {
             System.out.println("ATENÇÃO: estoque baixo para '" + produto.getNome() + "'!");
@@ -141,15 +172,15 @@ public class Main {
     }
 
     private static void mostrarEstoqueBaixo() {
-        imprimirLista(SERVICE.produtosComEstoqueBaixo(), "Nenhum produto com estoque baixo.");
+        imprimirLista(servico.produtosComEstoqueBaixo(), "Nenhum produto com estoque baixo.");
     }
 
     private static void mostrarRelatorios() {
         System.out.println("--- Relatório ---");
-        System.out.println(String.format(BR, "Valor total em estoque: R$ %.2f", SERVICE.valorTotalEmEstoque()));
+        System.out.println(String.format(BR, "Valor total em estoque: R$ %.2f", servico.valorTotalEmEstoque()));
 
         System.out.println("Produtos mais vendidos:");
-        List<VendaPorProduto> maisVendidos = SERVICE.produtosMaisVendidos(5);
+        List<VendaPorProduto> maisVendidos = servico.produtosMaisVendidos(5);
         if (maisVendidos.isEmpty()) {
             System.out.println("  (nenhuma venda registrada)");
         }
@@ -160,33 +191,37 @@ public class Main {
         }
 
         System.out.println("Histórico de movimentações:");
-        imprimirLista(SERVICE.listarMovimentacoes(), "  (nenhuma movimentação)");
+        imprimirLista(servico.listarMovimentacoes(), "  (nenhuma movimentação)");
     }
 
     private static void removerProduto() {
         String codigo = lerTexto("Código do produto a remover: ");
-        SERVICE.removerProduto(codigo);
+        servico.removerProduto(codigo);
         System.out.println("Produto removido.");
     }
 
     private static void carregarDadosDeExemplo() {
+        if (!servico.listarFornecedores().isEmpty() || !servico.listarProdutos().isEmpty()) {
+            System.out.println("Os dados de exemplo só podem ser carregados quando não há fornecedores nem produtos.");
+            return;
+        }
         Fornecedor techDistrib = new Fornecedor("11.111.111/0001-11", "TechDistrib", "(41) 3333-1111");
         Fornecedor mercadaoSul = new Fornecedor("22.222.222/0001-22", "Mercadão Sul", "(41) 3333-2222");
-        SERVICE.cadastrarFornecedor(techDistrib);
-        SERVICE.cadastrarFornecedor(mercadaoSul);
+        servico.cadastrarFornecedor(techDistrib);
+        servico.cadastrarFornecedor(mercadaoSul);
 
-        SERVICE.cadastrarProduto(new Produto("TEC001", "Mouse Gamer", new BigDecimal("129.90"), 5, Categoria.ELETRONICOS, techDistrib));
-        SERVICE.cadastrarProduto(new Produto("TEC002", "Teclado Mecânico", new BigDecimal("289.90"), 3, Categoria.ELETRONICOS, techDistrib));
-        SERVICE.cadastrarProduto(new Produto("ALI001", "Café 500g", new BigDecimal("18.50"), 10, Categoria.ALIMENTOS, mercadaoSul));
-        SERVICE.cadastrarProduto(new Produto("LIM001", "Detergente", new BigDecimal("3.20"), 20, Categoria.LIMPEZA, mercadaoSul));
+        servico.cadastrarProduto(new Produto("TEC001", "Mouse Gamer", new BigDecimal("129.90"), 5, Categoria.ELETRONICOS, techDistrib));
+        servico.cadastrarProduto(new Produto("TEC002", "Teclado Mecânico", new BigDecimal("289.90"), 3, Categoria.ELETRONICOS, techDistrib));
+        servico.cadastrarProduto(new Produto("ALI001", "Café 500g", new BigDecimal("18.50"), 10, Categoria.ALIMENTOS, mercadaoSul));
+        servico.cadastrarProduto(new Produto("LIM001", "Detergente", new BigDecimal("3.20"), 20, Categoria.LIMPEZA, mercadaoSul));
 
-        SERVICE.registrarEntrada("TEC001", 12);
-        SERVICE.registrarEntrada("TEC002", 6);
-        SERVICE.registrarEntrada("ALI001", 30);
-        SERVICE.registrarEntrada("LIM001", 25);
-        SERVICE.registrarSaida("TEC001", 8);
-        SERVICE.registrarSaida("ALI001", 22);
-        SERVICE.registrarSaida("LIM001", 3);
+        servico.registrarEntrada("TEC001", 12);
+        servico.registrarEntrada("TEC002", 6);
+        servico.registrarEntrada("ALI001", 30);
+        servico.registrarEntrada("LIM001", 25);
+        servico.registrarSaida("TEC001", 8);
+        servico.registrarSaida("ALI001", 22);
+        servico.registrarSaida("LIM001", 3);
 
         System.out.println("Dados de exemplo carregados (2 fornecedores, 4 produtos e algumas movimentações).");
     }
@@ -206,14 +241,14 @@ public class Main {
     }
 
     private static Fornecedor escolherFornecedor() {
-        List<Fornecedor> fornecedores = SERVICE.listarFornecedores();
+        List<Fornecedor> fornecedores = servico.listarFornecedores();
         if (fornecedores.isEmpty()) {
             throw new IllegalArgumentException("Nenhum fornecedor cadastrado.");
         }
         for (Fornecedor f : fornecedores) {
             System.out.println("  " + f);
         }
-        return SERVICE.buscarFornecedor(lerTexto("CNPJ do fornecedor: "));
+        return servico.buscarFornecedor(lerTexto("CNPJ do fornecedor: "));
     }
 
     // ---------- Leitura segura de entrada ----------

@@ -7,6 +7,7 @@ import com.vitor.estoque.model.Fornecedor;
 import com.vitor.estoque.model.MovimentacaoEstoque;
 import com.vitor.estoque.model.Produto;
 import com.vitor.estoque.model.TipoMovimentacao;
+import com.vitor.estoque.repository.GerenciadorDeTransacao;
 import com.vitor.estoque.repository.Repositorio;
 
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ import java.util.Map;
 
 /**
  * Regras de negócio do estoque: cadastros, entradas, saídas e relatórios.
+ * Não sabe onde os dados ficam guardados (memória ou banco): só usa as interfaces.
  */
 public class EstoqueService {
 
@@ -27,22 +29,34 @@ public class EstoqueService {
     private final Repositorio<Produto, String> produtos;
     private final Repositorio<Fornecedor, String> fornecedores;
     private final Repositorio<MovimentacaoEstoque, Long> movimentacoes;
+    private final GerenciadorDeTransacao transacao;
 
+    /** Sem banco de dados: não há transação a controlar. */
     public EstoqueService(Repositorio<Produto, String> produtos,
                           Repositorio<Fornecedor, String> fornecedores,
                           Repositorio<MovimentacaoEstoque, Long> movimentacoes) {
+        this(produtos, fornecedores, movimentacoes, GerenciadorDeTransacao.semTransacao());
+    }
+
+    public EstoqueService(Repositorio<Produto, String> produtos,
+                          Repositorio<Fornecedor, String> fornecedores,
+                          Repositorio<MovimentacaoEstoque, Long> movimentacoes,
+                          GerenciadorDeTransacao transacao) {
         this.produtos = produtos;
         this.fornecedores = fornecedores;
         this.movimentacoes = movimentacoes;
+        this.transacao = transacao;
     }
 
     // ---------- Fornecedores ----------
 
     public void cadastrarFornecedor(Fornecedor fornecedor) {
-        if (fornecedores.existe(fornecedor.getCnpj())) {
-            throw new EstoqueException("Já existe um fornecedor com o CNPJ " + fornecedor.getCnpj() + ".");
-        }
-        fornecedores.salvar(fornecedor);
+        transacao.executarSemRetorno(() -> {
+            if (fornecedores.existe(fornecedor.getCnpj())) {
+                throw new EstoqueException("Já existe um fornecedor com o CNPJ " + fornecedor.getCnpj() + ".");
+            }
+            fornecedores.salvar(fornecedor);
+        });
     }
 
     public Fornecedor buscarFornecedor(String cnpj) {
@@ -59,10 +73,16 @@ public class EstoqueService {
     // ---------- Produtos ----------
 
     public void cadastrarProduto(Produto produto) {
-        if (produtos.existe(produto.getCodigo())) {
-            throw new EstoqueException("Já existe um produto com o código " + produto.getCodigo() + ".");
-        }
-        produtos.salvar(produto);
+        transacao.executarSemRetorno(() -> {
+            if (produtos.existe(produto.getCodigo())) {
+                throw new EstoqueException("Já existe um produto com o código " + produto.getCodigo() + ".");
+            }
+            if (!fornecedores.existe(produto.getFornecedor().getCnpj())) {
+                throw new EstoqueException("O fornecedor " + produto.getFornecedor().getNome()
+                        + " não está cadastrado. Cadastre-o antes do produto.");
+            }
+            produtos.salvar(produto);
+        });
     }
 
     public Produto buscarProduto(String codigo) {
@@ -70,10 +90,18 @@ public class EstoqueService {
                 .orElseThrow(() -> new ProdutoNaoEncontradoException(codigo));
     }
 
+    /** Produto que já teve entrada ou saída não pode ser removido: o histórico precisa dele. */
     public void removerProduto(String codigo) {
-        if (!produtos.remover(codigo.trim())) {
-            throw new ProdutoNaoEncontradoException(codigo);
-        }
+        transacao.executarSemRetorno(() -> {
+            Produto produto = buscarProduto(codigo);
+            boolean temHistorico = movimentacoes.listarTodos().stream()
+                    .anyMatch(m -> m.getProduto().equals(produto));
+            if (temHistorico) {
+                throw new EstoqueException("O produto '" + produto.getNome()
+                        + "' tem movimentações registradas e não pode ser removido.");
+            }
+            produtos.remover(produto.getCodigo());
+        });
     }
 
     public void atualizarPreco(String codigo, BigDecimal novoPreco) {
@@ -103,18 +131,25 @@ public class EstoqueService {
 
     // ---------- Movimentações ----------
 
+    // Cada movimentação altera o produto E grava o histórico. Dentro da transação,
+    // se uma das duas gravações falhar, a outra é desfeita.
+
     public MovimentacaoEstoque registrarEntrada(String codigo, int quantidade) {
-        Produto produto = buscarProduto(codigo);
-        produto.adicionarEstoque(quantidade);
-        produtos.salvar(produto);
-        return registrar(produto, TipoMovimentacao.ENTRADA, quantidade);
+        return transacao.executar(() -> {
+            Produto produto = buscarProduto(codigo);
+            produto.adicionarEstoque(quantidade);
+            produtos.salvar(produto);
+            return registrar(produto, TipoMovimentacao.ENTRADA, quantidade);
+        });
     }
 
     public MovimentacaoEstoque registrarSaida(String codigo, int quantidade) {
-        Produto produto = buscarProduto(codigo);
-        produto.removerEstoque(quantidade); // lança EstoqueInsuficienteException se não houver
-        produtos.salvar(produto);
-        return registrar(produto, TipoMovimentacao.SAIDA, quantidade);
+        return transacao.executar(() -> {
+            Produto produto = buscarProduto(codigo);
+            produto.removerEstoque(quantidade); // lança EstoqueInsuficienteException se não houver
+            produtos.salvar(produto);
+            return registrar(produto, TipoMovimentacao.SAIDA, quantidade);
+        });
     }
 
     private MovimentacaoEstoque registrar(Produto produto, TipoMovimentacao tipo, int quantidade) {
