@@ -65,8 +65,3 @@ mvn test
 
 Os testes cobrem as regras de `Produto` (entrada, saída, estoque insuficiente, preço inválido) e do `EstoqueService` (duplicidade, movimentações, filtros, alertas, relatórios).
 
-## Próximos passos
-
-- [ ] Persistência em banco de dados com JDBC (MySQL, PostgreSQL ou SQL Server)
-- [ ] Controle de acesso com usuários (administrador e funcionário)
-- [ ] Interface gráfica ou API REST
